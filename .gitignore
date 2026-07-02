@@ -1,0 +1,48 @@
+# IDE
+.idea/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+**/.venv/
+.hf_cache/
+**/.hf_cache/
+~$*
+.codex_tmp/
+
+# Generated outputs
+outputs/
+**/outputs/
+logs/
+**/logs/
+saves/
+**/saves/
+models/*
+!models/README.md
+data/tmp/
+data/clinical_guides_bge_m3.jsonl
+data/spl/
+data/dispendatory_v2/
+data/pubchem_smiles_cache*.json
+data/drug_ingredient_smiles*.csv
+corefragPredict/1104dataenhance/data/找到使用了某个核心片段的药物.jsonl
+corefragPredict/1104dataenhance/prepared/corefrag_1104_qwen_sft_train.json
+
+## 排查的功能
+testxiaoke/*
+spl/*
+train/
+rag/
+project/
+models/
+milvus/
+logs/
+corefragPredict/
+data/
