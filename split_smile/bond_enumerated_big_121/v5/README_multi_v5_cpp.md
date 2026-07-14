@@ -68,17 +68,17 @@ Linux 的 Conda 环境解释器位于 `bin/python`，不要使用 Windows 专用
 
 ```bash
 cd /mnt/datadisk/split_smile/v5
-PYTHON_BIN=/root/anaconda3/envs/medical/bin/python \
-TOTAL_WORKERS=6 \
+PYTHON_BIN=/opt/miniconda3/envs/medical/bin/python \
+TOTAL_WORKERS=4 \
 ACTIVE_MOLECULES=1 \
-SHARDS=2048 \
-BATCH_SIZE=50000 \
-MAX_PENDING_TASKS=12 \
+SHARDS=4096 \
+BATCH_SIZE=25000 \
+MAX_PENDING_TASKS=8 \
 CHECKSUM=0 \
 COMPRESSION=zstd \
 COMPRESSION_LEVEL=1 \
-FAST_CORE=cpp \
-CPP_BATCH_SIZE=2048 \
+FAST_CORE=auto \
+CPP_BATCH_SIZE=1024 \
 ./run_multi_v5_cpp_nohup.sh
 ```
 
@@ -150,23 +150,25 @@ Canonical SMILES 仍然是主要耗时点，因为每个输出 fragment 仍然�
 如果日志中出现 `A process in the process pool was terminated abruptly`，通常是 worker 被系统 OOM killer 杀掉。优先使用下面的内存稳态参数恢复：
 
 ```bash
-PYTHON_BIN=/root/anaconda3/envs/medical/bin/python \
-TOTAL_WORKERS=6 \
+PYTHON_BIN=/opt/miniconda3/envs/medical/bin/python \
+TOTAL_WORKERS=4 \
 ACTIVE_MOLECULES=1 \
-SHARDS=2048 \
-BATCH_SIZE=50000 \
-MAX_PENDING_TASKS=12 \
+SHARDS=4096 \
+BATCH_SIZE=25000 \
+MAX_PENDING_TASKS=8 \
 CHECKSUM=0 \
 COMPRESSION=zstd \
 COMPRESSION_LEVEL=1 \
-FAST_CORE=cpp \
-CPP_BATCH_SIZE=2048 \
+FAST_CORE=auto \
+CPP_BATCH_SIZE=1024 \
 ./run_multi_v5_cpp_nohup.sh
 ```
 
 已经开始但未完成的 molecule 会被 `_SHARD_PLAN.json` 锁定 shard plan；要恢复 molecule_id=1049 这类未完成任务，保持 `SHARDS=2048` 不变即可。已完成 shard 会跳过，未完成 shard 的残留会清理后重跑。
 
-如果仍然 OOM，再降到 `TOTAL_WORKERS=4 MAX_PENDING_TASKS=8 BATCH_SIZE=25000 CPP_BATCH_SIZE=1024`。如果希望改成 `SHARDS=4096` 或 `SHARDS=8192` 来降低单 shard 状态集内存，必须使用 `--force` 或清理该 molecule 输出后从头重建，不能对未完成 molecule 直接改 `SHARDS`。
+如果仍然 OOM，再降到 `TOTAL_WORKERS=3 MAX_PENDING_TASKS=6 BATCH_SIZE=20000 CPP_BATCH_SIZE=512`。如果希望改成 `SHARDS=4096` 或 `SHARDS=8192` 来降低单 shard 状态集内存，必须使用 `--force` 或清理该 molecule 输出后从头重建，不能对未完成 molecule 直接改 `SHARDS`。
+
+`TOTAL_WORKERS=14 ACTIVE_MOLECULES=2 BATCH_SIZE=100000 MAX_PENDING_TASKS=64 CPP_BATCH_SIZE=8192` 这一类高并发参数在大 molecule 上已经实测触发过 Linux OOM kill，不建议作为默认或常规恢复参数。
 
 ## RDKit double-bond stereo fallback
 

@@ -14,6 +14,7 @@ import time
 import traceback
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from multiprocessing import Manager
@@ -1133,6 +1134,13 @@ def handle_completed_future(
         )
 
 
+def mark_context_failed(context: MoleculeContext, message: str, error_traceback: str | None = None) -> None:
+    context.failed = True
+    context.tasks.clear()
+    context.error_message = message
+    context.error_traceback = error_traceback if error_traceback is not None else traceback.format_exc()
+
+
 def finish_failed_contexts(active: list[MoleculeContext], args: argparse.Namespace) -> None:
     for context in list(active):
         if not context.failed_done:
@@ -1143,7 +1151,28 @@ def finish_failed_contexts(active: list[MoleculeContext], args: argparse.Namespa
         LOGGER.error("molecule_id=%s failed continue_on_error=true", context.molecule_id)
 
 
-def run_multi(args: argparse.Namespace) -> int:
+def fail_active_contexts_after_pool_break(
+    active: list[MoleculeContext],
+    futures: dict[Future[dict[str, object]], MoleculeContext],
+    message: str,
+) -> None:
+    for future in list(futures):
+        future.cancel()
+    futures.clear()
+    for context in active:
+        if not context.failed:
+            mark_context_failed(context, message, "")
+        context.in_flight = 0
+
+
+def shutdown_process_pool(executor: ProcessPoolExecutor, *, wait_for_workers: bool) -> None:
+    try:
+        executor.shutdown(wait=wait_for_workers, cancel_futures=True)
+    except Exception:
+        LOGGER.exception("process_pool_shutdown_failed")
+
+
+def _run_multi_without_pool_recovery(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     rows = read_csv_rows(Path(args.input), smiles_col=args.smiles_col, id_col=args.id_col)
     if args.limit_molecules is not None:
@@ -1224,6 +1253,117 @@ def run_multi(args: argparse.Namespace) -> int:
                         release_molecule_lock(context.out_dir, context.molecule_id)
                     executor.shutdown(wait=False, cancel_futures=True)
                     raise RuntimeError(f"molecule_id={failed[0].molecule_id} failed: {failed[0].error_message}")
+    return 0
+
+
+def run_multi(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out_dir)
+    rows = read_csv_rows(Path(args.input), smiles_col=args.smiles_col, id_col=args.id_col)
+    if args.limit_molecules is not None:
+        rows = rows[: args.limit_molecules]
+    LOGGER.info(
+        "loaded_input_molecules=%d total_workers=%d active_molecules=%d max_pending_tasks=%d out_dir=%s",
+        len(rows),
+        args.total_workers,
+        args.active_molecules,
+        args.max_pending_tasks,
+        out_dir,
+    )
+    compression_level = None if args.compression in {"snappy", "none"} else args.compression_level
+    compression = None if args.compression == "none" else args.compression
+    row_queue: deque[dict[str, str]] = deque(rows)
+    active: list[MoleculeContext] = []
+    futures: dict[Future[dict[str, object]], MoleculeContext] = {}
+
+    with Manager() as manager:
+        executor = ProcessPoolExecutor(max_workers=args.total_workers)
+        try:
+            while row_queue or active or futures:
+                try:
+                    while row_queue and len(active) < effective_active_limit(args, active):
+                        row = row_queue.popleft()
+                        LOGGER.info(
+                            "input_progress=%d/%d molecule_id=%s activate",
+                            len(rows) - len(row_queue),
+                            len(rows),
+                            row["molecule_id"],
+                        )
+                        try:
+                            context = activate_molecule(
+                                row=row,
+                                out_dir=out_dir,
+                                args=args,
+                                manager=manager,
+                                compression=compression,
+                                compression_level=compression_level,
+                            )
+                        except Exception as exc:
+                            if not args.continue_on_error:
+                                raise
+                            molecule_id = str(row["molecule_id"])
+                            molecule_output_dir(out_dir, molecule_id).mkdir(parents=True, exist_ok=True)
+                            molecule_error_json_path(out_dir, molecule_id).write_text(
+                                json.dumps(
+                                    {
+                                        "molecule_id": molecule_id,
+                                        "error": str(exc),
+                                        "traceback": traceback.format_exc(),
+                                        "failed_at": utc_now_iso(),
+                                    },
+                                    ensure_ascii=False,
+                                    indent=2,
+                                ),
+                                encoding="utf-8",
+                            )
+                            LOGGER.error("molecule_id=%s activation_failed error=%s", molecule_id, exc)
+                            continue
+                        if context is not None:
+                            active.append(context)
+
+                    submit_pending_tasks(executor, active, futures, args.max_pending_tasks)
+                    if not futures:
+                        finish_failed_contexts(active, args)
+                        if not row_queue and active:
+                            break
+                        continue
+
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        context = futures.pop(future)
+                        handle_completed_future(future, context, active, args)
+                    finish_failed_contexts(active, args)
+
+                    failed = [context for context in active if context.failed]
+                    if failed and not args.continue_on_error:
+                        for pending in futures:
+                            pending.cancel()
+                        for context in list(active):
+                            if context.failed:
+                                write_molecule_error(context, context.error_message)
+                            release_molecule_lock(context.out_dir, context.molecule_id)
+                        shutdown_process_pool(executor, wait_for_workers=False)
+                        raise RuntimeError(f"molecule_id={failed[0].molecule_id} failed: {failed[0].error_message}")
+                except BrokenProcessPool as exc:
+                    message = f"process pool broken: {exc}"
+                    LOGGER.error(
+                        "process_pool_broken active_molecules=%d pending_futures=%d error=%s",
+                        len(active),
+                        len(futures),
+                        exc,
+                    )
+                    fail_active_contexts_after_pool_break(active, futures, message)
+                    if not args.continue_on_error:
+                        for context in list(active):
+                            write_molecule_error(context, context.error_message)
+                            release_molecule_lock(context.out_dir, context.molecule_id)
+                        shutdown_process_pool(executor, wait_for_workers=False)
+                        raise
+                    finish_failed_contexts(active, args)
+                    shutdown_process_pool(executor, wait_for_workers=False)
+                    executor = ProcessPoolExecutor(max_workers=args.total_workers)
+                    continue
+        finally:
+            shutdown_process_pool(executor, wait_for_workers=True)
     return 0
 
 

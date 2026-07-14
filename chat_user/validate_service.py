@@ -14,15 +14,25 @@ logger = logging.getLogger("chat_user_api")
 
 def create_validate(turn_id: int, response_id: int) -> int:
     """Create one validate record with default status and return id."""
+    validate_payload = _get_validate_payload(turn_id, response_id)
+
     conn = get_conn()
     cursor = conn.cursor()
     try:
         cursor.execute(
             """
-            INSERT INTO zhiling_validate (turn_id, response_id)
-            VALUES (%s, %s)
+            INSERT INTO zhiling_validate (
+                turn_id, response_id, request_content, response_title, response_content
+            )
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (turn_id, response_id),
+            (
+                turn_id,
+                response_id,
+                validate_payload["request_content"],
+                validate_payload["response_title"],
+                validate_payload["response_content"],
+            ),
         )
         conn.commit()
         return cursor.lastrowid
@@ -54,12 +64,21 @@ def create_validates_batch(items: List[dict]) -> List[int]:
                 raise ValueError("response_ids cannot be empty")
 
             for response_id in response_ids:
+                validate_payload = _get_validate_payload(turn_id, response_id)
                 cursor.execute(
                     """
-                    INSERT INTO zhiling_validate (turn_id, response_id)
-                    VALUES (%s, %s)
+                    INSERT INTO zhiling_validate (
+                        turn_id, response_id, request_content, response_title, response_content
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (turn_id, response_id),
+                    (
+                        turn_id,
+                        response_id,
+                        validate_payload["request_content"],
+                        validate_payload["response_title"],
+                        validate_payload["response_content"],
+                    ),
                 )
                 created_ids.append(cursor.lastrowid)
 
@@ -83,8 +102,19 @@ def get_validate_by_id(validate_id: int) -> Optional[dict]:
     try:
         cursor.execute(
             """
-            SELECT id, turn_id, response_id, status, judge_conclusion, judge_content,
-                   attachment_urls, create_at, update_at
+            SELECT
+                id,
+                turn_id,
+                response_id,
+                request_content,
+                response_title,
+                response_content,
+                status,
+                judge_conclusion,
+                judge_content,
+                attachment_urls,
+                create_at,
+                update_at
             FROM zhiling_validate
             WHERE id = %s
             """,
@@ -107,7 +137,7 @@ def list_validates_by_filters(
     end_time: Optional[datetime],
     keywords: Optional[str],
 ) -> List[dict]:
-    """Batch query validate records with optional filters and joined content."""
+    """Batch query validate records with optional filters."""
     if judge_conclusion is not None and judge_conclusion not in (-1, 0, 1):
         raise ValueError("judge_conclusion must be one of -1, 0, 1")
     if start_time and end_time and start_time > end_time:
@@ -133,7 +163,7 @@ def list_validates_by_filters(
             params.append(end_time)
         if keywords:
             where_parts.append(
-                "(dt.request_content LIKE %s OR udtr.response_title LIKE %s OR udtr.response_content LIKE %s)"
+                "(zv.request_content LIKE %s OR zv.response_title LIKE %s OR zv.response_content LIKE %s)"
             )
             keyword_value = f"%{keywords}%"
             params.extend([keyword_value, keyword_value, keyword_value])
@@ -143,22 +173,20 @@ def list_validates_by_filters(
             zv.id,
             zv.turn_id,
             zv.response_id,
+            zv.request_content,
+            zv.response_title,
+            zv.response_content,
             zv.status,
             zv.judge_conclusion,
             zv.judge_content,
             zv.attachment_urls,
             zv.create_at,
-            zv.update_at,
-            dt.request_content,
-            udtr.response_title,
-            udtr.response_content
+            zv.update_at
         FROM zhiling_validate AS zv
         INNER JOIN dialogue_turns AS dt
             ON zv.turn_id = dt.turn_id
         INNER JOIN user_dialogues AS ud
             ON dt.dialogue_id = ud.dialogue_id
-        INNER JOIN user_dialogue_turns_response AS udtr
-            ON zv.response_id = udtr.id
         WHERE {' AND '.join(where_parts)}
         ORDER BY zv.id ASC
         """
@@ -218,8 +246,19 @@ def update_validate(
         conn.commit()
         cursor.execute(
             """
-            SELECT id, turn_id, response_id, status, judge_conclusion, judge_content,
-                   attachment_urls, create_at, update_at
+            SELECT
+                id,
+                turn_id,
+                response_id,
+                request_content,
+                response_title,
+                response_content,
+                status,
+                judge_conclusion,
+                judge_content,
+                attachment_urls,
+                create_at,
+                update_at
             FROM zhiling_validate
             WHERE id = %s
             """,
@@ -268,3 +307,32 @@ def _deserialize_validate_row(row: Optional[dict]) -> Optional[dict]:
     else:
         row["attachment_urls"] = []
     return row
+
+
+def _get_validate_payload(turn_id: int, response_id: int) -> dict:
+    """Load validate snapshot fields using the same association logic as batch-query."""
+    conn = get_conn()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT
+                dt.request_content,
+                ur.response_title,
+                ur.response_content
+            FROM dialogue_turns AS dt
+            INNER JOIN user_dialogue_turns_response AS ur
+                ON dt.turn_id = ur.turn_id
+            WHERE dt.turn_id = %s AND ur.id = %s
+            """,
+            (turn_id, response_id),
+        )
+        row = cursor.fetchone()
+        if not row:
+            raise ValueError("turn_id and response_id do not match an existing dialogue response")
+        return row
+    except Error as exc:
+        raise RuntimeError(f"Failed to load validate payload: {exc}") from exc
+    finally:
+        cursor.close()
+        conn.close()

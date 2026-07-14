@@ -13,6 +13,7 @@ from dialogue_service import (
     count_all_users_turns,
     count_user_turns,
     create_dialogue,
+    delete_dialogue,
     get_dialogue_turns_with_validate_status,
     get_user_dialogue_by_id,
     list_dialogues,
@@ -214,6 +215,11 @@ class DialogueUpdateResponse(BaseModel):
     dialogue: DialogueSummaryResponse
 
 
+class DialogueDeleteResponse(BaseModel):
+    message: str
+    dialogue_id: int
+
+
 class DialogueTurnAppendResponse(BaseModel):
     message: str
     turn: DialogueTurnResponse
@@ -300,6 +306,9 @@ class ValidateResponse(BaseModel):
     id: int
     turn_id: int
     response_id: int
+    request_content: Optional[str] = None
+    response_title: Optional[str] = None
+    response_content: Optional[str] = None
     status: str
     judge_conclusion: Optional[int] = None
     judge_content: Optional[str] = None
@@ -309,9 +318,7 @@ class ValidateResponse(BaseModel):
 
 
 class ValidateBatchQueryResponse(ValidateResponse):
-    request_content: str
-    response_title: str
-    response_content: str
+    pass
 
 
 class AttachmentUploadResponse(BaseModel):
@@ -470,6 +477,24 @@ def update_dialogue_api(dialogue_id: int, payload: DialogueUpdateRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RuntimeError as exc:
         logger.exception("update_dialogue_api failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+
+@app.delete(
+    "/dialogues/{dialogue_id}",
+    response_model=DialogueDeleteResponse,
+    summary="Delete one dialogue and its related dialogue data",
+    tags=["dialogues"],
+)
+def delete_dialogue_api(dialogue_id: int):
+    try:
+        logger.info("delete_dialogue_api dialogue_id=%s", dialogue_id)
+        deleted = delete_dialogue(dialogue_id)
+        if not deleted:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dialogue not found")
+        return {"message": "Dialogue deleted successfully", "dialogue_id": dialogue_id}
+    except RuntimeError as exc:
+        logger.exception("delete_dialogue_api failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 

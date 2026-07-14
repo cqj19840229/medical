@@ -17,13 +17,16 @@ CREATE TABLE IF NOT EXISTS user_dialogues (
     user_id INT UNSIGNED NOT NULL,
     title VARCHAR(200) NOT NULL,
     turn_count INT UNSIGNED NOT NULL DEFAULT 0,
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL DEFAULT NULL,
     CONSTRAINT fk_user_dialogues_user
         FOREIGN KEY (user_id) REFERENCES users(user_id)
         ON DELETE CASCADE,
     KEY idx_user_dialogues_user_id (user_id),
-    KEY idx_user_dialogues_updated_at (updated_at)
+    KEY idx_user_dialogues_updated_at (updated_at),
+    KEY idx_user_dialogues_is_deleted (is_deleted)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS dialogue_turns (
@@ -86,18 +89,15 @@ CREATE TABLE IF NOT EXISTS zhiling_validate (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     turn_id BIGINT UNSIGNED NOT NULL,
     response_id BIGINT UNSIGNED NOT NULL,
+    request_content LONGTEXT NULL,
+    response_title VARCHAR(200) NULL,
+    response_content LONGTEXT NULL,
     status VARCHAR(50) NOT NULL DEFAULT '待验证',
     judge_conclusion TINYINT NULL COMMENT '1=推断正确, 0=推断错误, -1=无法判断',
     judge_content LONGTEXT NULL,
     attachment_urls LONGTEXT NULL,
     create_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     update_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_zhiling_validate_turn
-        FOREIGN KEY (turn_id) REFERENCES dialogue_turns(turn_id)
-        ON DELETE CASCADE,
-    CONSTRAINT fk_zhiling_validate_response
-        FOREIGN KEY (response_id) REFERENCES user_dialogue_turns_response(id)
-        ON DELETE CASCADE,
     UNIQUE KEY uk_zhiling_validate_turn_response (turn_id, response_id),
     KEY idx_zhiling_validate_turn_id (turn_id),
     KEY idx_zhiling_validate_response_id (response_id)

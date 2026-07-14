@@ -118,7 +118,7 @@ def update_dialogue_title(dialogue_id: int, title: str) -> Optional[dict]:
             UPDATE user_dialogues
             SET title = %s,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE dialogue_id = %s
+            WHERE dialogue_id = %s AND is_deleted = 0
             """,
             (title, dialogue_id),
         )
@@ -131,7 +131,7 @@ def update_dialogue_title(dialogue_id: int, title: str) -> Optional[dict]:
             """
             SELECT dialogue_id, user_id, title, turn_count, created_at, updated_at
             FROM user_dialogues
-            WHERE dialogue_id = %s
+            WHERE dialogue_id = %s AND is_deleted = 0
             """,
             (dialogue_id,),
         )
@@ -139,6 +139,47 @@ def update_dialogue_title(dialogue_id: int, title: str) -> Optional[dict]:
     except Error as exc:
         conn.rollback()
         raise RuntimeError(f"Failed to update dialogue title: {exc}") from exc
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def delete_dialogue(dialogue_id: int) -> bool:
+    """Logically delete one dialogue."""
+    conn = get_conn()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        conn.start_transaction()
+
+        cursor.execute(
+            """
+            SELECT dialogue_id
+            FROM user_dialogues
+            WHERE dialogue_id = %s AND is_deleted = 0
+            FOR UPDATE
+            """,
+            (dialogue_id,),
+        )
+        dialogue = cursor.fetchone()
+        if not dialogue:
+            conn.rollback()
+            return False
+
+        cursor.execute(
+            """
+            UPDATE user_dialogues
+            SET is_deleted = 1,
+                deleted_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE dialogue_id = %s
+            """,
+            (dialogue_id,),
+        )
+        conn.commit()
+        return True
+    except Error as exc:
+        conn.rollback()
+        raise RuntimeError(f"Failed to delete dialogue: {exc}") from exc
     finally:
         cursor.close()
         conn.close()
@@ -177,7 +218,7 @@ def append_dialogue_turn_by_dialogue_id(
             """
             SELECT dialogue_id
             FROM user_dialogues
-            WHERE dialogue_id = %s
+            WHERE dialogue_id = %s AND is_deleted = 0
             FOR UPDATE
             """,
             (dialogue_id,),
@@ -279,7 +320,7 @@ def get_user_dialogue_by_id(user_id: int, dialogue_id: int) -> Optional[dict]:
             """
             SELECT dialogue_id, user_id, title, turn_count, created_at, updated_at
             FROM user_dialogues
-            WHERE user_id = %s AND dialogue_id = %s
+            WHERE user_id = %s AND dialogue_id = %s AND is_deleted = 0
             """,
             (user_id, dialogue_id),
         )
@@ -319,7 +360,7 @@ def get_dialogue_turns_with_validate_status(dialogue_id: int) -> Optional[dict]:
             """
             SELECT dialogue_id, user_id, title, turn_count, created_at, updated_at
             FROM user_dialogues
-            WHERE dialogue_id = %s
+            WHERE dialogue_id = %s AND is_deleted = 0
             """,
             (dialogue_id,),
         )
@@ -375,7 +416,7 @@ def list_dialogues(user_id: int) -> List[dict]:
             """
             SELECT dialogue_id, user_id, title, turn_count, created_at, updated_at
             FROM user_dialogues
-            WHERE user_id = %s
+            WHERE user_id = %s AND is_deleted = 0
             ORDER BY dialogue_id ASC
             """,
             (user_id,),
@@ -399,7 +440,7 @@ def count_user_turns(user_id: int) -> int:
             FROM user_dialogues AS ud
             LEFT JOIN dialogue_turns AS dt
                 ON ud.dialogue_id = dt.dialogue_id
-            WHERE ud.user_id = %s
+            WHERE ud.user_id = %s AND ud.is_deleted = 0
             """,
             (user_id,),
         )
@@ -423,6 +464,7 @@ def count_all_users_turns() -> List[dict]:
             FROM users AS u
             LEFT JOIN user_dialogues AS ud
                 ON u.user_id = ud.user_id
+               AND ud.is_deleted = 0
             LEFT JOIN dialogue_turns AS dt
                 ON ud.dialogue_id = dt.dialogue_id
             GROUP BY u.user_id, u.username
