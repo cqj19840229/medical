@@ -16,3 +16,6 @@ MINIO_CONFIG = {
     "bucket_name": "medicalnew",
     "secure": False,
 }
+
+# AES 对称加密密钥，用于用户密码的可逆加密存储
+USER_PASSWORD_KEY = "IFIKMBhTsvqpIbynphYMIIjqYlte5YXoSAqJNRlFDtg="

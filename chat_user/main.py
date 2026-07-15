@@ -420,6 +420,36 @@ def change_password_api(payload: ChangePasswordRequest):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
+class DecryptPasswordRequest(BaseModel):
+    encrypted_password: str = Field(..., min_length=1, description="Encrypted password cipher text")
+
+
+class DecryptPasswordResponse(BaseModel):
+    plain_password: str
+
+
+@app.post(
+    "/users/decrypt-password",
+    response_model=DecryptPasswordResponse,
+    summary="Decrypt stored password cipher to plain text",
+    tags=["users"],
+    include_in_schema=False,
+)
+def decrypt_password_api(payload: DecryptPasswordRequest):
+    try:
+        from cryptography.fernet import Fernet
+
+        from config import USER_PASSWORD_KEY
+
+        cipher = Fernet(USER_PASSWORD_KEY.encode())
+        plain = cipher.decrypt(payload.encrypted_password.encode()).decode()
+        logger.info("decrypt_password_api success")
+        return {"plain_password": plain}
+    except Exception as exc:
+        logger.exception("decrypt_password_api failed")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Decrypt failed: {exc}") from exc
+
+
 @app.post(
     "/dialogues",
     response_model=DialogueCreateResponse,

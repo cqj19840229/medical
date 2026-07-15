@@ -45,6 +45,12 @@ Request body:
 }
 ```
 
+Notes:
+
+- Current password storage uses the new reversible cipher configured by `USER_PASSWORD_KEY`.
+- Legacy `bcrypt` users can still log in normally.
+- When a legacy `bcrypt` user logs in successfully, the stored password will be upgraded automatically to the new algorithm.
+
 ### Change Password
 
 - Method: `POST`
@@ -59,6 +65,39 @@ Request body:
   "new_password": "654321"
 }
 ```
+
+Notes:
+
+- If the old password belongs to a legacy `bcrypt` record, verification is still supported.
+- After password change succeeds, the stored password will always be rewritten with the new algorithm.
+
+### Decrypt Password
+
+- Method: `POST`
+- Path: `/users/decrypt-password`
+- This endpoint is intentionally hidden from Swagger and only documented here.
+
+Request body:
+
+```json
+{
+  "encrypted_password": "gAAAAABp..."
+}
+```
+
+Response:
+
+```json
+{
+  "plain_password": "123456"
+}
+```
+
+Usage notes:
+
+- This endpoint is only for decrypting passwords already stored with the current reversible algorithm.
+- Legacy `bcrypt` hashes cannot be decrypted by this endpoint.
+- Call it like a normal JSON API even though it does not appear in `/docs`.
 
 ## Dialogues
 
@@ -309,7 +348,9 @@ Request body:
 
 ## Notes
 
-- Passwords are stored with `bcrypt`.
+- Passwords are stored with the current reversible cipher configured by `USER_PASSWORD_KEY`.
+- Legacy `bcrypt` password hashes are still supported for login verification and password change.
+- Legacy `bcrypt` records are automatically upgraded to the new algorithm after successful login.
 - Database uses MySQL.
 - Attachment files are stored in MinIO.
 - Validation status default value is `待验证`.
