@@ -11,6 +11,7 @@
 
 ```powershell
 & 'C:\Users\56884\anaconda3\envs\medical\python.exe' -m uvicorn main:app --host 0.0.0.0 --port 8000
+/opt/miniconda3/envs/medical -m uvicorn main:app --host 0.0.0.0 --port 8888
 ```
 
 Swagger UI：<http://localhost:8000/docs>
@@ -30,7 +31,7 @@ OpenAPI JSON：<http://localhost:8000/openapi.json>
 ```json
 {
   "fragment": "c1ccccc1",
-  "type": "pharmacokinetics",
+  "type": "pk",
   "offset": 0,
   "limit": 100
 }
@@ -38,10 +39,15 @@ OpenAPI JSON：<http://localhost:8000/openapi.json>
 
 `type` 可为：
 
-- `pharmacokinetics`：返回 Drug 的药代字段和 `ENZYME_RELATION` 关联的
+- `pk`：返回 Drug 的药代字段和 `ENZYME_RELATION` 关联的
   `MetabolicEnzyme`。
-- `pharmacophore`：返回 `DRUG_INTERACTION`、`HAS_CLINICAL_FEATURE`、
-  `TARGETS` 关联节点。
+- `effect`：先根据 fragment 找到 Drug，再通过 `Drug -[:TREATS]- Indication`
+  查询适应症，通过适应症查询 `HAS_CLINICAL_FEATURE` 临床表征，并直接查询
+  Drug 的 `TARGETS`。Drug 使用 `drug_name CONTAINS active_ingredient`（忽略大小写）
+  匹配，名称结果均去重。不返回
+  `InteractionObject`；`data` 中仅返回名称数组 `indication_name`、
+  `feature_name`、`target_name`。
+- `safety`：返回 `HAS_ADVERSE_REACTION` 关联的不良反应节点。
 
 连接信息有默认值，也可通过 `.env.example` 所列环境变量覆盖。环境变量不会由
 程序自动读取 `.env` 文件，请在启动进程前设置。

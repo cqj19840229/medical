@@ -141,7 +141,7 @@ def fragment_details(request: FragmentDetailRequest):
         request.type.value,
     )
     try:
-        results = enrich_matches(page, request.type.value)
+        results = enrich_matches(page, request.type.value, standardized)
     except Neo4jError as exc:
         raise HTTPException(status_code=503, detail=f"Neo4j 查询失败: {exc}") from exc
     return {

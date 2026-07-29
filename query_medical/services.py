@@ -85,10 +85,101 @@ def _node_payload(node: Any) -> dict[str, Any]:
     return {"labels": sorted(node.labels), "properties": dict(node)}
 
 
-def _query_neo4j(ingredients: Iterable[str], query_type: str) -> dict[str, dict[str, Any]]:
+def _node_property_values(nodes: Iterable[Any], property_name: str) -> list[Any]:
+    """按原查询顺序返回节点属性值，并过滤空值、去重。"""
+    values = []
+    seen = set()
+    for node in nodes:
+        value = node.get(property_name) if node is not None else None
+        if value is not None and value not in seen:
+            seen.add(value)
+            values.append(value)
+    return values
+
+
+def _deduplicate(values: Iterable[Any]) -> list[Any]:
+    return list(dict.fromkeys(value for value in values if value is not None))
+
+
+def _query_effect_neo4j(names: list[str]) -> dict[str, dict[str, Any]]:
+    """从 Drug 直接查询适应症、临床表征和靶标。"""
+    cypher = """
+    UNWIND $ingredients AS ingredient
+    MATCH (d:Drug)
+    WHERE toLower(coalesce(d.drug_name, '')) CONTAINS toLower(ingredient)
+    OPTIONAL MATCH (d)-[:TARGETS]-(target:Target)
+    WITH ingredient, d,
+         [x IN collect(DISTINCT target.target_name) WHERE x IS NOT NULL]
+         AS target_names
+    OPTIONAL MATCH (d)-[:TREATS]-(indication:Indication)
+    WITH ingredient, d, target_names,
+         [x IN collect(DISTINCT indication) WHERE x IS NOT NULL] AS indications
+    UNWIND CASE WHEN indications = [] THEN [NULL] ELSE indications END AS indication
+    OPTIONAL MATCH (indication)-[:HAS_CLINICAL_FEATURE]-(feature:ClinicalFeature)
+    WITH ingredient,
+         collect(DISTINCT indication.indication_name) AS indication_names,
+         collect(DISTINCT feature.feature_name) AS feature_names,
+         collect(DISTINCT target_names) AS target_name_groups
+    RETURN ingredient,
+           [x IN indication_names WHERE x IS NOT NULL] AS indication_names,
+           [x IN feature_names WHERE x IS NOT NULL] AS feature_names,
+           reduce(result = [], group IN target_name_groups |
+               reduce(inner = result, name IN group |
+                   CASE WHEN name IN inner THEN inner ELSE inner + [name] END
+               )
+           ) AS target_names
+    """
+    driver = GraphDatabase.driver(
+        NEO4J_CONFIG["uri"],
+        auth=(NEO4J_CONFIG["user"], NEO4J_CONFIG["password"]),
+        connection_timeout=10,
+        connection_acquisition_timeout=10,
+        max_transaction_retry_time=5,
+    )
+    started = perf_counter()
+    try:
+        with driver.session(database=NEO4J_CONFIG["database"]) as session:
+            logger.info("neo4j_effect_query cypher=%s", " ".join(cypher.split()))
+            rows = session.run(Query(cypher, timeout=30), ingredients=names)
+            output = {
+                row["ingredient"]: {
+                    "indication_name": row["indication_names"],
+                    "feature_name": row["feature_names"],
+                    "target_name": row["target_names"],
+                    "drug_found": True,
+                }
+                for row in rows
+            }
+    finally:
+        driver.close()
+        logger.info(
+            "neo4j_effect_end ingredient_count=%d elapsed_ms=%.2f",
+            len(names),
+            (perf_counter() - started) * 1000,
+        )
+
+    for name in names:
+        output.setdefault(
+            name,
+            {
+                "indication_name": [],
+                "feature_name": [],
+                "target_name": [],
+                "drug_found": False,
+            },
+        )
+    return output
+
+
+def _query_neo4j(
+    ingredients: Iterable[str], query_type: str, fragment: str | None = None
+) -> dict[str, dict[str, Any]]:
     names = list(dict.fromkeys(name for name in ingredients if name))
     if not names:
         return {}
+
+    if query_type == "effect":
+        return _query_effect_neo4j(names)
 
     if query_type == "pk":
         cypher = """
@@ -98,20 +189,17 @@ def _query_neo4j(ingredients: Iterable[str], query_type: str) -> dict[str, dict[
         RETURN d.ingredient AS ingredient, d,
                [x IN collect(DISTINCT enzyme) WHERE x IS NOT NULL] AS enzymes
         """
-    else:
+    elif query_type == "safety":
         cypher = """
         MATCH (d:Drug)
         WHERE d.ingredient IN $ingredients
-        OPTIONAL MATCH (d)-[:DRUG_INTERACTION]-(interaction)
-        WITH d,
-             [x IN collect(DISTINCT interaction) WHERE x IS NOT NULL] AS interactions
-        OPTIONAL MATCH (d)-[:HAS_CLINICAL_FEATURE]-(feature)
-        WITH d, interactions,
-             [x IN collect(DISTINCT feature) WHERE x IS NOT NULL] AS clinical_features
-        OPTIONAL MATCH (d)-[:TARGETS]-(target)
-        RETURN d.ingredient AS ingredient, d, interactions, clinical_features,
-               [x IN collect(DISTINCT target) WHERE x IS NOT NULL] AS targets
+        OPTIONAL MATCH (d)-[:HAS_ADVERSE_REACTION]-(reaction)
+        RETURN d.ingredient AS ingredient, d,
+               [x IN collect(DISTINCT reaction) WHERE x IS NOT NULL]
+               AS adverse_reactions
         """
+    else:
+        raise ValueError(f"不支持的 query_type: {query_type}")
 
     output: dict[str, dict[str, Any]] = {}
     compact_cypher = " ".join(cypher.split())
@@ -132,7 +220,7 @@ def _query_neo4j(ingredients: Iterable[str], query_type: str) -> dict[str, dict[
     try:
         with driver.session(database=NEO4J_CONFIG["database"]) as session:
             query = Query(cypher, timeout=30)
-            for record in session.run(query, ingredients=names):
+            for record in session.run(query, ingredients=names, fragment=fragment):
                 ingredient = record["ingredient"]
                 drug = record["d"]
                 if query_type == "pk":
@@ -145,13 +233,9 @@ def _query_neo4j(ingredients: Iterable[str], query_type: str) -> dict[str, dict[
                     }
                 else:
                     output[ingredient] = {
-                        "drug_interactions": [
-                            _node_payload(node) for node in record["interactions"]
-                        ],
-                        "clinical_features": [
-                            _node_payload(node) for node in record["clinical_features"]
-                        ],
-                        "targets": [_node_payload(node) for node in record["targets"]],
+                        "adverse_reactions": [
+                            _node_payload(node) for node in record["adverse_reactions"]
+                        ]
                     }
                 output[ingredient]["drug_found"] = drug is not None
     finally:
@@ -166,10 +250,10 @@ def _query_neo4j(ingredients: Iterable[str], query_type: str) -> dict[str, dict[
 
 
 def enrich_matches(
-    matches: list[dict[str, str | None]], query_type: str
+    matches: list[dict[str, str | None]], query_type: str, fragment: str | None = None
 ) -> list[dict[str, Any]]:
     graph_data = _query_neo4j(
-        (item["active_ingredient"] for item in matches), query_type
+        (item["active_ingredient"] for item in matches), query_type, fragment
     )
     results = []
     for item in matches:

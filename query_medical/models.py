@@ -5,8 +5,9 @@ from pydantic import BaseModel, Field
 
 
 class QueryType(str, Enum):
-    pharmacokinetics = "pharmacokinetics"
-    pharmacophore = "pharmacophore"
+    pk = "pk"
+    effect = "effect"
+    safety = "safety"
 
 
 class FragmentRequest(BaseModel):
