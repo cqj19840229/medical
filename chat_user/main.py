@@ -20,6 +20,7 @@ from dialogue_service import (
     update_dialogue_title,
 )
 from minio_service import delete_attachment, upload_attachment
+from neo4j_query_service import create_neo4j_query
 from user_service import change_password, create_user, get_user_by_id, get_user_by_username, verify_user
 from validate_service import (
     create_validate,
@@ -39,6 +40,7 @@ app = FastAPI(
         {"name": "dialogues", "description": "Dialogue related APIs"},
         {"name": "validates", "description": "Validation related APIs"},
         {"name": "attachments", "description": "MinIO attachment APIs"},
+        {"name": "neo4j", "description": "Neo4j query related APIs"},
     ],
 )
 
@@ -345,6 +347,28 @@ class ValidateBatchCreateResponse(BaseModel):
     records: List[ValidateResponse]
 
 
+class Neo4jQueryCreateRequest(BaseModel):
+    source_type: str = Field(..., min_length=1, max_length=100, description="Source type")
+    source: str = Field(..., min_length=1, max_length=255, description="Source value")
+    aim_type: str = Field(..., min_length=1, max_length=100, description="Aim type")
+    aim: str = Field(..., min_length=1, max_length=255, description="Aim value")
+    max_jump_num: int = Field(..., gt=0, description="Max jump count")
+    max_path_num: int = Field(..., gt=0, description="Max path count")
+    user_id: int = Field(..., gt=0, description="User ID")
+
+
+class Neo4jQueryResponse(BaseModel):
+    id: int
+    source_type: str
+    source: str
+    aim_type: str
+    aim: str
+    max_jump_num: int
+    max_path_num: int
+    user_id: int
+    created_at: datetime
+
+
 # @app.get("/", summary="Service home")
 # def home():
 #     return {
@@ -448,6 +472,35 @@ def decrypt_password_api(payload: DecryptPasswordRequest):
     except Exception as exc:
         logger.exception("decrypt_password_api failed")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Decrypt failed: {exc}") from exc
+
+
+@app.post(
+    "/neo4j-queries",
+    response_model=Neo4jQueryResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create neo4j query record",
+    tags=["neo4j"],
+)
+def create_neo4j_query_api(payload: Neo4jQueryCreateRequest):
+    try:
+        logger.info("create_neo4j_query_api payload=%s", payload.model_dump())
+        user = get_user_by_id(payload.user_id)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return create_neo4j_query(
+            payload.source_type,
+            payload.source,
+            payload.aim_type,
+            payload.aim,
+            payload.max_jump_num,
+            payload.max_path_num,
+            payload.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.exception("create_neo4j_query_api failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 @app.post(

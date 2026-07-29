@@ -102,3 +102,20 @@ CREATE TABLE IF NOT EXISTS zhiling_validate (
     KEY idx_zhiling_validate_turn_id (turn_id),
     KEY idx_zhiling_validate_response_id (response_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS neo4j_query (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    source_type VARCHAR(100) NOT NULL,
+    source VARCHAR(255) NOT NULL,
+    aim_type VARCHAR(100) NOT NULL,
+    aim VARCHAR(255) NOT NULL,
+    max_jump_num INT UNSIGNED NOT NULL,
+    max_path_num INT UNSIGNED NOT NULL,
+    user_id INT UNSIGNED NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_neo4j_query_user
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+        ON DELETE CASCADE,
+    KEY idx_neo4j_query_user_id (user_id),
+    KEY idx_neo4j_query_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

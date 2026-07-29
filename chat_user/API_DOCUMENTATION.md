@@ -93,6 +93,12 @@ Response:
 }
 ```
 
+curl -X POST "http://36.151.241.14:8083/users/decrypt-password" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "encrypted_password": "gAAAAABqVt4t2k_sfLuQabEXs6lOmtcqM4QIjFv85AzvP9A1fCpudOuuwY3S35dIj0tSFq0bhgp_SX4uxV76rmLfcFFezr8n3w=="
+  }'
+
 Usage notes:
 
 - This endpoint is only for decrypting passwords already stored with the current reversible algorithm.
