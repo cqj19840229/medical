@@ -1,7 +1,11 @@
 from contextlib import asynccontextmanager
+from datetime import datetime
+import gzip
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import shutil
 from time import perf_counter
 import uuid
 
@@ -24,16 +28,55 @@ from services import (
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
+LOG_ARCHIVE_DIR = LOG_DIR / "archive"
+LOG_ARCHIVE_DIR.mkdir(exist_ok=True)
 logger = logging.getLogger("fragment_api")
 logger.setLevel(logging.INFO)
+
+
+class ArchivingRotatingFileHandler(RotatingFileHandler):
+    """按大小轮转并压缩归档，永久保留历史日志。"""
+
+    def __init__(self, filename, archive_dir: Path, **kwargs):
+        self.archive_dir = archive_dir
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+        # backupCount 由自定义 doRollover 接管，不执行历史日志删除。
+        super().__init__(filename, backupCount=0, **kwargs)
+
+    def doRollover(self):
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+
+        source = Path(self.baseFilename)
+        if source.exists() and source.stat().st_size > 0:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            archive = self.archive_dir / f"{source.stem}_{timestamp}.log.gz"
+            try:
+                with source.open("rb") as source_file, gzip.open(
+                    archive, "wb"
+                ) as archive_file:
+                    shutil.copyfileobj(source_file, archive_file)
+                # 仅在归档成功后清空活动日志；历史内容已保存在 gzip 中。
+                source.unlink()
+            except Exception:
+                if archive.exists():
+                    archive.unlink()
+                self.stream = self._open()
+                raise
+
+        if not self.delay:
+            self.stream = self._open()
+
+
 if not logger.handlers:
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
-    file_handler = RotatingFileHandler(
+    file_handler = ArchivingRotatingFileHandler(
         LOG_DIR / "api.log",
+        archive_dir=LOG_ARCHIVE_DIR,
         maxBytes=10 * 1024 * 1024,
-        backupCount=5,
         encoding="utf-8",
     )
     file_handler.setFormatter(formatter)
@@ -41,6 +84,51 @@ if not logger.handlers:
     stream_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
+
+SENSITIVE_KEYS = {
+    "password",
+    "passwd",
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "secret",
+    "api_key",
+}
+MAX_REQUEST_PARAMS_LENGTH = 4096
+
+
+def _mask_sensitive(value):
+    """递归脱敏请求参数中的密码、令牌等字段。"""
+    if isinstance(value, dict):
+        return {
+            key: "***" if key.lower() in SENSITIVE_KEYS else _mask_sensitive(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_sensitive(item) for item in value]
+    return value
+
+
+async def _request_params(request: Request) -> str:
+    params = {
+        "query": dict(request.query_params),
+        "path": dict(request.path_params),
+    }
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        body = await request.body()
+        if body:
+            try:
+                params["body"] = json.loads(body)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                params["body"] = "<invalid-json>"
+    serialized = json.dumps(
+        _mask_sensitive(params), ensure_ascii=False, separators=(",", ":")
+    )
+    if len(serialized) > MAX_REQUEST_PARAMS_LENGTH:
+        return serialized[:MAX_REQUEST_PARAMS_LENGTH] + "...<truncated>"
+    return serialized
 
 
 @asynccontextmanager
@@ -62,18 +150,25 @@ app = FastAPI(
 async def request_timing(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
     started = perf_counter()
+    params = await _request_params(request)
+    client_ip = request.client.host if request.client else "-"
     logger.info(
-        "request_start request_id=%s method=%s path=%s",
+        "request_start request_id=%s client_ip=%s method=%s path=%s params=%s",
         request_id,
+        client_ip,
         request.method,
         request.url.path,
+        params,
     )
     try:
         response = await call_next(request)
     except Exception:
         logger.exception(
-            "request_error request_id=%s elapsed_ms=%.2f",
+            "request_error request_id=%s method=%s path=%s params=%s elapsed_ms=%.2f",
             request_id,
+            request.method,
+            request.url.path,
+            params,
             (perf_counter() - started) * 1000,
         )
         raise
