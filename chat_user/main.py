@@ -349,9 +349,9 @@ class ValidateBatchCreateResponse(BaseModel):
 
 class Neo4jQueryCreateRequest(BaseModel):
     source_type: str = Field(..., min_length=1, max_length=100, description="Source type")
-    source: str = Field(..., min_length=1, max_length=255, description="Source value")
+    source: str = Field(default="", max_length=255, description="Source value, can be empty")
     aim_type: str = Field(..., min_length=1, max_length=100, description="Aim type")
-    aim: str = Field(..., min_length=1, max_length=255, description="Aim value")
+    aim: str = Field(default="", max_length=255, description="Aim value, can be empty")
     max_jump_num: int = Field(..., gt=0, description="Max jump count")
     max_path_num: int = Field(..., gt=0, description="Max path count")
     user_id: int = Field(..., gt=0, description="User ID")
