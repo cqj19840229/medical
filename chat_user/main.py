@@ -7,6 +7,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from swagger_ui_bundle import swagger_ui_path
@@ -47,6 +48,23 @@ app = FastAPI(
         {"name": "neo4j", "description": "Neo4j query related APIs"},
     ],
 )
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema["openapi"] = "3.0.3"
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 app.mount(
     "/static/swagger-ui",
     StaticFiles(directory=swagger_ui_path),

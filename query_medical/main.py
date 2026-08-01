@@ -12,6 +12,7 @@ import uuid
 import mysql.connector
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from neo4j.exceptions import Neo4jError
 from swagger_ui_bundle import swagger_ui_path
@@ -149,6 +150,23 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url=None,
 )
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema["openapi"] = "3.0.3"
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 app.mount(
     "/static/swagger-ui",
     StaticFiles(directory=swagger_ui_path),

@@ -1,0 +1,8 @@
+fastapi==0.140.7
+uvicorn==0.51.0
+mysql-connector-python==9.7.0
+minio
+bcrypt
+cryptography
+python-multipart
+swagger-ui-bundle
