@@ -54,8 +54,13 @@ OpenAPI JSON：<http://localhost:8000/openapi.json>
 
 ## 日志与耗时
 
-- 日志同时输出到控制台和 `logs/api.log`，单文件 10 MB，保留 5 个历史文件。
-- 日志包含请求 ID、MySQL 扫描/匹配数、各阶段耗时、Cypher 和 Neo4j 耗时。
+- 日志同时输出到控制台和 `logs/api.log`，服务重启后继续追加，不会覆盖。
+- 活动日志达到 10 MB 后自动压缩归档至 `logs/archive/api_时间.log.gz`；
+  所有归档永久保留，程序不会自动删除历史日志。
+- 统一 HTTP 中间件记录所有请求的请求 ID、客户端 IP、方法、路径、查询参数、
+  路径参数、JSON 请求体、状态码和总耗时；敏感字段自动脱敏，请求参数最长记录
+  4096 字符。
+- 日志还包含 MySQL 扫描/匹配数、各阶段耗时、Cypher 和 Neo4j 耗时。
 - HTTP 响应头包含 `X-Request-ID` 和 `X-Process-Time-Ms`。
 - 详情响应体包含 `response_time_ms`。
 - Neo4j 单次查询超时为 30 秒；详情接口默认最多返回 100 条，可使用
