@@ -102,33 +102,55 @@ def _deduplicate(values: Iterable[Any]) -> list[Any]:
 
 
 def _query_effect_neo4j(names: list[str]) -> dict[str, dict[str, Any]]:
-    """从 Drug 直接查询适应症、临床表征和靶标。"""
+    """一次扫描 Drug，并分别聚合适应症、临床表征和靶标。"""
     cypher = """
-    UNWIND $ingredients AS ingredient
     MATCH (d:Drug)
-    WHERE toLower(coalesce(d.drug_name, '')) CONTAINS toLower(ingredient)
-    OPTIONAL MATCH (d)-[:TARGETS]-(target:Target)
-    WITH ingredient, d,
-         [x IN collect(DISTINCT target.target_name) WHERE x IS NOT NULL]
-         AS target_names
-    OPTIONAL MATCH (d)-[:TREATS]-(indication:Indication)
-    WITH ingredient, d, target_names,
-         [x IN collect(DISTINCT indication) WHERE x IS NOT NULL] AS indications
-    UNWIND CASE WHEN indications = [] THEN [NULL] ELSE indications END AS indication
-    OPTIONAL MATCH (indication)-[:HAS_CLINICAL_FEATURE]-(feature:ClinicalFeature)
-    WITH ingredient,
-         collect(DISTINCT indication.indication_name) AS indication_names,
-         collect(DISTINCT feature.feature_name) AS feature_names,
-         collect(DISTINCT target_names) AS target_name_groups
+    WITH d, [ingredient IN $ingredients
+             WHERE toLower(coalesce(d.drug_name, '')) CONTAINS ingredient.normalized]
+             AS matched_ingredients
+    WHERE size(matched_ingredients) > 0
+    CALL (d) {
+        OPTIONAL MATCH (d)-[:TARGETS]-(target:Target)
+        RETURN [x IN collect(DISTINCT target.target_name) WHERE x IS NOT NULL]
+               AS target_names
+    }
+    CALL (d) {
+        OPTIONAL MATCH (d)-[:TREATS]-(indication:Indication)
+        OPTIONAL MATCH (indication)-[:HAS_CLINICAL_FEATURE]-(feature:ClinicalFeature)
+        RETURN [x IN collect(DISTINCT indication.indication_name) WHERE x IS NOT NULL]
+                   AS indication_names,
+               [x IN collect(DISTINCT feature.feature_name) WHERE x IS NOT NULL]
+                   AS feature_names
+    }
+    UNWIND matched_ingredients AS ingredient
+    WITH ingredient.name AS ingredient,
+         collect(indication_names) AS indication_name_groups,
+         collect(feature_names) AS feature_name_groups,
+         collect(target_names) AS target_name_groups
     RETURN ingredient,
-           [x IN indication_names WHERE x IS NOT NULL] AS indication_names,
-           [x IN feature_names WHERE x IS NOT NULL] AS feature_names,
+           reduce(result = [], group IN indication_name_groups |
+               reduce(name_list = result, name IN group |
+                   CASE WHEN name IN name_list THEN name_list
+                        ELSE name_list + [name] END
+               )
+           ) AS indication_names,
+           reduce(result = [], group IN feature_name_groups |
+               reduce(name_list = result, name IN group |
+                   CASE WHEN name IN name_list THEN name_list
+                        ELSE name_list + [name] END
+               )
+           ) AS feature_names,
            reduce(result = [], group IN target_name_groups |
-               reduce(inner = result, name IN group |
-                   CASE WHEN name IN inner THEN inner ELSE inner + [name] END
+               reduce(name_list = result, name IN group |
+                   CASE WHEN name IN name_list THEN name_list
+                        ELSE name_list + [name] END
                )
            ) AS target_names
     """
+    ingredients = [
+        {"name": name, "normalized": name.lower()}
+        for name in names
+    ]
     driver = GraphDatabase.driver(
         NEO4J_CONFIG["uri"],
         auth=(NEO4J_CONFIG["user"], NEO4J_CONFIG["password"]),
@@ -140,7 +162,7 @@ def _query_effect_neo4j(names: list[str]) -> dict[str, dict[str, Any]]:
     try:
         with driver.session(database=NEO4J_CONFIG["database"]) as session:
             logger.info("neo4j_effect_query cypher=%s", " ".join(cypher.split()))
-            rows = session.run(Query(cypher, timeout=30), ingredients=names)
+            rows = session.run(Query(cypher, timeout=30), ingredients=ingredients)
             output = {
                 row["ingredient"]: {
                     "indication_name": row["indication_names"],

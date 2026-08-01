@@ -7,7 +7,10 @@ import uuid
 
 import mysql.connector
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from neo4j.exceptions import Neo4jError
+from swagger_ui_bundle import swagger_ui_path
 
 from models import (
     FragmentDetailRequest,
@@ -56,7 +59,23 @@ app = FastAPI(
         "并可关联 Neo4j 中的药代动力学或药效团信息。"
     ),
     lifespan=lifespan,
+    docs_url=None,
 )
+app.mount(
+    "/static/swagger-ui",
+    StaticFiles(directory=swagger_ui_path),
+    name="swagger-ui",
+)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
+    )
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):

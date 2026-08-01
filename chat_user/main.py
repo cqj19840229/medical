@@ -6,7 +6,10 @@ from typing import List, Optional
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
+from swagger_ui_bundle import swagger_ui_path
 
 from dialogue_service import (
     append_dialogue_turn_by_dialogue_id,
@@ -35,6 +38,7 @@ app = FastAPI(
     title="Chat User API",
     description="",
     version="1.1.0",
+    docs_url=None,
     openapi_tags=[
         {"name": "users", "description": "User related APIs"},
         {"name": "dialogues", "description": "Dialogue related APIs"},
@@ -43,6 +47,21 @@ app = FastAPI(
         {"name": "neo4j", "description": "Neo4j query related APIs"},
     ],
 )
+app.mount(
+    "/static/swagger-ui",
+    StaticFiles(directory=swagger_ui_path),
+    name="swagger-ui",
+)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
+    )
 
 logging.basicConfig(
     level=logging.INFO,
