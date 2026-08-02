@@ -1,0 +1,12 @@
+{
+  "listeners": [
+    {"host": "0.0.0.0", "port": 8080, "upstream": "http://127.0.0.1:8000"},
+    {"host": "0.0.0.0", "port": 8081, "upstream": "http://127.0.0.1:8001"}
+  ],
+  "audit_log": "logs/access.jsonl",
+  "upstream_timeout_seconds": 60,
+  "max_inspect_body_bytes": 1048576,
+  "log_max_bytes": 10485760,
+  "log_backup_count": 10,
+  "log_level": "info"
+}
