@@ -19,6 +19,13 @@ class FragmentRequest(BaseModel):
 
 
 class FragmentDetailRequest(FragmentRequest):
+    fragment: str | list[str] = Field(
+        min_length=1,
+        examples=[["c1ccccc1", "Cc1ccccc1"]],
+        description=(
+            "一个 fragment SMILES，或多个必须同时存在且原子互不重叠的 fragment SMILES。"
+        ),
+    )
     type: QueryType = Field(description="Neo4j 信息类型。")
     offset: int = Field(default=0, ge=0, description="从第几个 MySQL 匹配结果开始。")
     limit: int = Field(
@@ -48,7 +55,7 @@ class DrugDetail(BaseModel):
 
 
 class FragmentDetailResponse(BaseModel):
-    fragment: str
+    fragment: str | list[str]
     type: QueryType
     total_matches: int
     offset: int

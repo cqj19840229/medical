@@ -37,6 +37,21 @@ OpenAPI JSON：<http://localhost:8000/openapi.json>
 }
 ```
 
+详情接口也支持多个互不重叠的必选片段：
+
+```json
+{
+  "fragment": ["c1ccccc1", "Cc1ccccc1"],
+  "type": "effect",
+  "offset": 0,
+  "limit": 100
+}
+```
+
+多个片段采用 AND 匹配，而且每个片段必须使用不同的分子原子。例如苯环与
+甲基取代苯环同时查询时，同一个芳环不能重复满足两个条件，因此结果必须至少
+存在两个相应的苯环。
+
 `type` 可为：
 
 - `pk`：返回 Drug 的药代字段和 `ENZYME_RELATION` 关联的

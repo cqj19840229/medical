@@ -31,6 +31,8 @@ class InvalidSmilesError(ValueError):
 
 
 def standardize_smiles(smiles: str) -> tuple[str, Chem.Mol]:
+    if not smiles or not smiles.strip():
+        raise InvalidSmilesError("fragment 不能为空")
     mol = Chem.MolFromSmiles(smiles.strip())
     if mol is None:
         raise InvalidSmilesError("fragment 不是有效的 SMILES")
@@ -42,8 +44,43 @@ def standardize_smiles(smiles: str) -> tuple[str, Chem.Mol]:
     return Chem.MolToSmiles(mol, canonical=True, isomericSmiles=True), mol
 
 
-def search_ingredient_smiles(fragment_mol: Chem.Mol) -> list[dict[str, str | None]]:
+def _has_non_overlapping_substructures(
+    molecule: Chem.Mol, fragment_mols: list[Chem.Mol]
+) -> bool:
+    """判断每个 fragment 是否都能映射到一组互不重叠的分子原子。"""
+    candidates: list[tuple[int, list[tuple[int, ...]]]] = []
+    for fragment_mol in fragment_mols:
+        atom_matches = list(
+            molecule.GetSubstructMatches(fragment_mol, uniquify=True, maxMatches=1000)
+        )
+        if not atom_matches:
+            return False
+        candidates.append((fragment_mol.GetNumAtoms(), atom_matches))
+
+    # 先处理候选少的片段；候选数相同时先处理原子数更多的片段。
+    candidates.sort(key=lambda item: (len(item[1]), -item[0]))
+
+    def assign(index: int, occupied_atoms: set[int]) -> bool:
+        if index == len(candidates):
+            return True
+        for atom_match in candidates[index][1]:
+            atoms = set(atom_match)
+            if occupied_atoms.isdisjoint(atoms) and assign(
+                index + 1, occupied_atoms | atoms
+            ):
+                return True
+        return False
+
+    return assign(0, set())
+
+
+def search_ingredient_smiles(
+    fragment_mols: Chem.Mol | list[Chem.Mol],
+) -> list[dict[str, str | None]]:
     started = perf_counter()
+    required_fragments = (
+        fragment_mols if isinstance(fragment_mols, list) else [fragment_mols]
+    )
     sql = """
         SELECT DISTINCT active_ingredient, smiles
         FROM pdf_ingredient_smiles
@@ -63,7 +100,9 @@ def search_ingredient_smiles(fragment_mol: Chem.Mol) -> list[dict[str, str | Non
             for row in cursor:
                 scanned += 1
                 molecule = Chem.MolFromSmiles(row["smiles"])
-                if molecule is not None and molecule.HasSubstructMatch(fragment_mol):
+                if molecule is not None and _has_non_overlapping_substructures(
+                    molecule, required_fragments
+                ):
                     matches.append(
                         {
                             "active_ingredient": row["active_ingredient"],
@@ -71,7 +110,8 @@ def search_ingredient_smiles(fragment_mol: Chem.Mol) -> list[dict[str, str | Non
                         }
                     )
     logger.info(
-        "mysql_substructure_search scanned=%d matched=%d elapsed_ms=%.2f",
+        "mysql_substructure_search fragment_count=%d scanned=%d matched=%d elapsed_ms=%.2f",
+        len(required_fragments),
         scanned,
         len(matches),
         (perf_counter() - started) * 1000,

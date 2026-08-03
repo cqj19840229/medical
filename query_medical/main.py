@@ -221,18 +221,30 @@ async def request_timing(request: Request, call_next):
     return response
 
 
-def _find(fragment: str):
+def _find(fragment: str | list[str]):
     started = perf_counter()
     try:
-        standardized, mol = standardize_smiles(fragment)
+        input_fragments = fragment if isinstance(fragment, list) else [fragment]
+        standardized_fragments = []
+        fragment_mols = []
+        for item in input_fragments:
+            standardized, mol = standardize_smiles(item)
+            standardized_fragments.append(standardized)
+            fragment_mols.append(mol)
+        standardized_result = (
+            standardized_fragments
+            if isinstance(fragment, list)
+            else standardized_fragments[0]
+        )
         logger.info(
-            "fragment_standardized input=%s standardized=%s elapsed_ms=%.2f",
+            "fragment_standardized input=%s standardized=%s fragment_count=%d elapsed_ms=%.2f",
             fragment,
-            standardized,
+            standardized_result,
+            len(fragment_mols),
             (perf_counter() - started) * 1000,
         )
-        matches = search_ingredient_smiles(mol)
-        return standardized, matches
+        matches = search_ingredient_smiles(fragment_mols)
+        return standardized_result, matches
     except InvalidSmilesError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except mysql.connector.Error as exc:
