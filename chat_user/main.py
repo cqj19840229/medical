@@ -9,7 +9,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from swagger_ui_bundle import swagger_ui_path
 
 from dialogue_service import (
@@ -97,12 +97,34 @@ def _mask_sensitive_fields(data: dict) -> dict:
         masked["old_password"] = "***MASKED***"
     if "new_password" in masked:
         masked["new_password"] = "***MASKED***"
+    if "telephone" in masked and masked["telephone"]:
+        masked["telephone"] = "***MASKED***"
     return masked
 
 
 class UserCreateRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=100, description="Username")
     password: str = Field(..., min_length=6, max_length=100, description="Plain password for signup")
+    telephone: Optional[str] = Field(default=None, description="11-digit Chinese mainland mobile number")
+    display_name: str = Field(..., min_length=1, max_length=100, description="Chinese display name")
+
+    @field_validator("telephone")
+    @classmethod
+    def validate_telephone(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if len(value) != 11 or not value.isdigit() or value[0] != "1" or value[1] not in "3456789":
+            raise ValueError("telephone must be a valid 11-digit Chinese mainland mobile number")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("display_name cannot be empty")
+        return value
 
 
 class UserLoginRequest(BaseModel):
@@ -187,12 +209,16 @@ class DialogueTurnAppendRequest(BaseModel):
 class UserResponse(BaseModel):
     user_id: int
     username: str
+    telephone: str
+    display_name: str
     created_at: Optional[datetime] = None
 
 
 class UserCreateResponse(BaseModel):
     message: str
     user_id: int
+    telephone: str
+    display_name: str
 
 
 class LoginResponse(BaseModel):
@@ -425,8 +451,8 @@ class Neo4jQueryResponse(BaseModel):
 def create_user_api(payload: UserCreateRequest):
     try:
         logger.info("create_user_api payload=%s", _mask_sensitive_fields(payload.model_dump()))
-        user_id = create_user(payload.username, payload.password)
-        return {"message": "User created successfully", "user_id": user_id}
+        user = create_user(payload.username, payload.password, payload.display_name, payload.telephone)
+        return {"message": "User created successfully", **user}
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -443,6 +469,18 @@ def create_user_api(payload: UserCreateRequest):
 #         return user
 #     except RuntimeError as exc:
 #         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+
+@app.get("/users/{user_id}", response_model=UserResponse, summary="Get user by user ID", tags=["users"])
+def get_user_by_id_api(user_id: int):
+    try:
+        user = get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return user
+    except RuntimeError as exc:
+        logger.exception("get_user_by_id_api failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
 
 @app.post("/auth/login", response_model=LoginResponse, summary="Verify login", tags=["users"])
