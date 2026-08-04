@@ -10,7 +10,7 @@
 在本目录执行：
 
 ```powershell
-& 'C:\Users\56884\anaconda3\envs\medical\python.exe' -m uvicorn main:app --host 0.0.0.0 --port 8000
+& 'C:\Users\56884\anaconda3\envs\medical\python.exe' -m uvicorn main:app --host 0.0.0.0 --port 8000 --app-dir C:\medical\github\medical\query_medical
 /opt/miniconda3/envs/medical -m uvicorn main:app --host 0.0.0.0 --port 8888
 ```
 

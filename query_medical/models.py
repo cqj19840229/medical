@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, List, Union
 
 from pydantic import BaseModel, Field
 
@@ -18,8 +18,8 @@ class FragmentRequest(BaseModel):
     )
 
 
-class FragmentDetailRequest(FragmentRequest):
-    fragment: str | list[str] = Field(
+class FragmentDetailRequest(BaseModel):
+    fragment: Union[str, List[str]] = Field(
         min_length=1,
         examples=[["c1ccccc1", "Cc1ccccc1"]],
         description=(
@@ -55,7 +55,7 @@ class DrugDetail(BaseModel):
 
 
 class FragmentDetailResponse(BaseModel):
-    fragment: str | list[str]
+    fragment: Union[str, List[str]]
     type: QueryType
     total_matches: int
     offset: int

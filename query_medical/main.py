@@ -11,8 +11,11 @@ import uuid
 
 import mysql.connector
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from neo4j.exceptions import Neo4jError
 from swagger_ui_bundle import swagger_ui_path
@@ -152,6 +155,31 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request, exc: RequestValidationError
+):
+    """记录进入接口方法前产生的 422 请求参数校验错误。"""
+    request_id = getattr(request.state, "request_id", None)
+    if not request_id:
+        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    errors = jsonable_encoder(exc.errors())
+    body = _mask_sensitive(jsonable_encoder(exc.body))
+    logger.warning(
+        "request_validation_error request_id=%s method=%s path=%s errors=%s body=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        json.dumps(errors, ensure_ascii=False, separators=(",", ":")),
+        json.dumps(body, ensure_ascii=False, separators=(",", ":")),
+    )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors, "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
+
+
 def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -186,6 +214,7 @@ async def custom_swagger_ui_html():
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
     started = perf_counter()
     params = await _request_params(request)
     client_ip = request.client.host if request.client else "-"
